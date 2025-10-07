@@ -21,6 +21,7 @@ jobs:
     strategy:
       matrix:
         env: [dev, staging, prod]
+    environment: terraform-${{ matrix.env }}
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
       TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
@@ -66,5 +67,3 @@ jobs:
       - name: Terraform Apply
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: terraform -chdir=infra/terraform/envs/${{ matrix.env }} apply -auto-approve tfplan
-        environment:
-          name: terraform-${{ matrix.env }}
