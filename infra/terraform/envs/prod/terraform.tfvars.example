@@ -1,0 +1,31 @@
+region                  = "us-east-1"
+environment             = "prod"
+vpc_cidr                = "10.0.0.0/16"
+enable_nat_gateway      = true
+enable_fargate_spot     = true
+api_image               = "123456789012.dkr.ecr.us-east-1.amazonaws.com/jotiq-prod-api:main"
+web_image               = "123456789012.dkr.ecr.us-east-1.amazonaws.com/jotiq-prod-web:main"
+worker_image            = "123456789012.dkr.ecr.us-east-1.amazonaws.com/jotiq-prod-worker:main"
+api_domain              = "api.jotiq.com"
+app_domain              = "app.jotiq.com"
+assets_domain           = "assets.jotiq.com"
+domain                  = "jotiq.com"
+create_hosted_zone      = false
+hosted_zone_id          = "Z1234567890"
+alb_acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/abcd1234"
+cloudfront_acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/efgh5678"
+cloudfront_waf_arn      = null
+ses_transactional_domain = "tx.jotiq.com"
+ses_marketing_domain     = "mkt.jotiq.com"
+ses_metrics_identity     = "tx.jotiq.com"
+github_org              = "jotiq"
+github_repo             = "jotiq-app"
+api_environment = {
+  NODE_ENV = "production"
+}
+web_environment = {
+  NODE_ENV = "production"
+}
+worker_environment = {
+  NODE_ENV = "production"
+}

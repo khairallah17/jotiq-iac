@@ -1,0 +1,121 @@
+name: Build and Deploy ECS Services
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, staging, prod]
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Determine account ID
+        id: account
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+
+      - name: Build and push API image
+        run: |
+          ECR_REGISTRY=${{ steps.account.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          API_REPO=jotiq-${{ matrix.environment }}-api
+          docker build -t $ECR_REGISTRY/$API_REPO:${IMAGE_TAG} -f api/Dockerfile api
+          docker push $ECR_REGISTRY/$API_REPO:${IMAGE_TAG}
+
+      - name: Build and push Web image
+        run: |
+          ECR_REGISTRY=${{ steps.account.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          WEB_REPO=jotiq-${{ matrix.environment }}-web
+          docker build -t $ECR_REGISTRY/$WEB_REPO:${IMAGE_TAG} -f web/Dockerfile web
+          docker push $ECR_REGISTRY/$WEB_REPO:${IMAGE_TAG}
+
+      - name: Build and push Worker image
+        run: |
+          ECR_REGISTRY=${{ steps.account.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          WORKER_REPO=jotiq-${{ matrix.environment }}-worker
+          docker build -t $ECR_REGISTRY/$WORKER_REPO:${IMAGE_TAG} -f worker/Dockerfile worker
+          docker push $ECR_REGISTRY/$WORKER_REPO:${IMAGE_TAG}
+
+      - name: Register updated API task definition
+        id: api_task
+        run: |
+          FAMILY=jotiq-${{ matrix.environment }}-api
+          CONTAINER_NAME=${FAMILY}-container
+          ECR_REGISTRY=${{ steps.account.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          IMAGE=$ECR_REGISTRY/jotiq-${{ matrix.environment }}-api:${IMAGE_TAG}
+          aws ecs describe-task-definition --task-definition $FAMILY --query 'taskDefinition' > base.json
+          cat base.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > stripped.json
+          cat stripped.json | jq '.containerDefinitions |= map(if .name == "'"${CONTAINER_NAME}"'" then .image = "'"${IMAGE}"'" else . end)' > updated.json
+          TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://updated.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+          rm -f base.json stripped.json updated.json
+
+      - name: Register updated Web task definition
+        id: web_task
+        run: |
+          FAMILY=jotiq-${{ matrix.environment }}-web
+          CONTAINER_NAME=${FAMILY}-container
+          ECR_REGISTRY=${{ steps.account.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          IMAGE=$ECR_REGISTRY/jotiq-${{ matrix.environment }}-web:${IMAGE_TAG}
+          aws ecs describe-task-definition --task-definition $FAMILY --query 'taskDefinition' > base.json
+          cat base.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > stripped.json
+          cat stripped.json | jq '.containerDefinitions |= map(if .name == "'"${CONTAINER_NAME}"'" then .image = "'"${IMAGE}"'" else . end)' > updated.json
+          TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://updated.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+          rm -f base.json stripped.json updated.json
+
+      - name: Register updated Worker task definition
+        id: worker_task
+        run: |
+          FAMILY=jotiq-${{ matrix.environment }}-worker
+          CONTAINER_NAME=${FAMILY}-container
+          ECR_REGISTRY=${{ steps.account.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          IMAGE=$ECR_REGISTRY/jotiq-${{ matrix.environment }}-worker:${IMAGE_TAG}
+          aws ecs describe-task-definition --task-definition $FAMILY --query 'taskDefinition' > base.json
+          cat base.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > stripped.json
+          cat stripped.json | jq '.containerDefinitions |= map(if .name == "'"${CONTAINER_NAME}"'" then .image = "'"${IMAGE}"'" else . end)' > updated.json
+          TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://updated.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+          rm -f base.json stripped.json updated.json
+
+      - name: Trigger API deployment
+        run: |
+          CLUSTER=jotiq-${{ matrix.environment }}
+          SERVICE=jotiq-${{ matrix.environment }}-api
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition ${{ steps.api_task.outputs.arn }} --force-new-deployment
+
+      - name: Trigger Web deployment
+        run: |
+          CLUSTER=jotiq-${{ matrix.environment }}
+          SERVICE=jotiq-${{ matrix.environment }}-web
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition ${{ steps.web_task.outputs.arn }} --force-new-deployment
+
+      - name: Trigger Worker deployment
+        run: |
+          CLUSTER=jotiq-${{ matrix.environment }}
+          SERVICE=jotiq-${{ matrix.environment }}-worker
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition ${{ steps.worker_task.outputs.arn }} --force-new-deployment
